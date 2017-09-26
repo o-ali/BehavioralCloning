@@ -15,8 +15,9 @@ The goals / steps of this project are the following:
 
 [//]: # (Image References)
 
-[image1]: ./NvidiaArch.png "Nvidia Architecture"
-[image2]: ./ReducedData.png "Data Histogram"
+[image1]: ./media/NvidiaArch.png "Nvidia Architecture"
+[image2]: ./media/ReducedData.png "Data Histogram"
+[video1]: ./media/track1_video.mp4 "Track1 Sim Run"
 
 ---
 # Files Submitted
