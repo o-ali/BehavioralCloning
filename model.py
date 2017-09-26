@@ -14,7 +14,6 @@ from keras.layers import Flatten, Dense, Lambda, Cropping2D
 from keras.layers.convolutional import Convolution2D
 from keras.layers.pooling import MaxPooling2D
 from sklearn.model_selection import train_test_split
-#from random import shuffle
 from os import getcwd
 import matplotlib.pyplot as plt
 from keras.callbacks import ModelCheckpoint, Callback
@@ -24,62 +23,36 @@ print("done")
 
 # ## Preprocess image function (distortion, color space conversion)
 
+# 1. Crop the image to keep pixels 50-140 on the y axis while retaining the x axis and the 3(bgr) layers
+# 2. Resize the image to minimize the required memory and make the training faster, the target resize is the recommended amount from the Nvidia documentation
+# 3. Apply a small gaussian blur to reduce noise
+# 4. Convert the image to YUV color space to better the contrast for the learning process. As the Nvidia doc suggests, the YUV will allow the model to learn view the contrasting terrains/edges better.
+
 # In[2]:
 
 
 def preprocess_image(img):
+    #avoid input size error in keras model
     new_img = img[50:140,:,:]
-    # apply subtle blur
     new_img = cv2.GaussianBlur(new_img, (3,3), 0)
-    # scale to 66x200x3 (same as nVidia)
     new_img = cv2.resize(new_img,(200, 66), interpolation = cv2.INTER_AREA)
-    # convert to YUV color space (as nVidia paper suggests)
     new_img = cv2.cvtColor(new_img, cv2.COLOR_BGR2YUV)
     return new_img
 
 print("Done")
 
 
-# ## Distort the images function
-
-# In[ ]:
-
-
-def random_distort(img, angle):
-    new_img = img.astype(float)
-    # random brightness - the mask bit keeps values from going beyond (0,255)
-    value = np.random.randint(-28, 28)
-    if value > 0:
-        mask = (new_img[:,:,0] + value) > 255 
-    if value <= 0:
-        mask = (new_img[:,:,0] + value) < 0
-    new_img[:,:,0] += np.where(mask, 0, value)
-    # random shadow - full height, random left/right side, random darkening
-    h,w = new_img.shape[0:2]
-    mid = np.random.randint(0,w)
-    factor = np.random.uniform(0.6,0.8)
-    if np.random.rand() > .5:
-        new_img[:,0:mid,0] *= factor
-    else:
-        new_img[:,mid:w,0] *= factor
-    # randomly shift horizon
-    h,w,_ = new_img.shape
-    horizon = 2*h/5
-    v_shift = np.random.randint(-h/8,h/8)
-    pts1 = np.float32([[0,horizon],[w,horizon],[0,h],[w,h]])
-    pts2 = np.float32([[0,horizon+v_shift],[w,horizon+v_shift],[0,h],[w,h]])
-    M = cv2.getPerspectiveTransform(pts1,pts2)
-    new_img = cv2.warpPerspective(new_img,M,(w,h), borderMode=cv2.BORDER_REPLICATE)
-    return (new_img.astype(np.uint8), angle)
-print("done")
-
-
 # ## Generate the training data with pre processing
+
+# ### The Generator
+# This generator is used to create extra training data by applying changes to the current images and adding them as new data.
+# The first change is to make sure the images match our pre processing from the drive.py so we call pre_process() on each of them.
+# Next we shuffle the data and if the angle size is greater or less than .33 we create a mirrored image and apply the opposite(to the original) angle and append that data to the data set. We then shuffle the data again before yielding the batch size back.
 
 # In[3]:
 
 
-def generate_training_data(image_paths, angles, batch_size=128, validation_flag=False):
+def generate_training_data(image_paths, angles, batch_size=128):
     image_paths, angles = shuffle(image_paths, angles)
     X,y = ([],[])
     while True:       
@@ -87,8 +60,6 @@ def generate_training_data(image_paths, angles, batch_size=128, validation_flag=
             img = cv2.imread(image_paths[i])
             angle = angles[i]
             img = preprocess_image(img)
-            #if not validation_flag:
-            #    img, angle = random_distort(img, angle)
             X.append(img)
             y.append(angle)
             if len(X) == batch_size:
@@ -110,6 +81,10 @@ print("done")
 
 
 # ## Load the data from the CSV
+
+# Reading the CSV file driving_log.csv which contains data columns:
+# - center image path, left image path, right image path, steering, throttle, brake, speed
+# 
 
 # In[4]:
 
@@ -143,6 +118,10 @@ print('Size of data:', image_paths.shape, angles.shape)
 
 # ## Display the data distribution and remove unwanted amount of driving without turns
 
+# The data set contains a very large amount of data from a few steering angles most notably a 0 steering angle. This resulted in a model that is a lot more bias towards not turning or adjusting the the middle of the road. To fix this, we delete data from columns that have much more data values than the rest(more than 50% of the average to be exact) the average here being the amount of angles/23. Deleted data is selected at random after adding a keep_prob to every angle(1 if we dont want to remove any).
+# 
+# The graph below shows the original angle data in the blue bars and the resulting data in orange.
+
 # In[5]:
 
 
@@ -153,7 +132,7 @@ width = 0.7 * (bins[1] - bins[0])
 center = (bins[:-1] + bins[1:]) / 2
 plt.bar(center, hist, align='center', width=width)
 plt.plot((np.min(angles), np.max(angles)), (avg_samples_per_bin, avg_samples_per_bin), 'k-')
-
+#set keep probability for data from steering angles with more than half the average samples per angle
 keep_probs = []
 target = avg_samples_per_bin * .5
 for i in range(num_bins):
@@ -171,7 +150,7 @@ for i in range(len(angles)):
 image_paths = np.delete(image_paths, remove_list, axis=0)
 angles = np.delete(angles, remove_list)
 
-# print histogram again to show more even distribution of steering angles
+# print histogram to show the new distribution of steering angles
 hist, bins = np.histogram(angles, num_bins)
 plt.bar(center, hist, align='center', width=width)
 plt.plot((np.min(angles), np.max(angles)), (avg_samples_per_bin, avg_samples_per_bin), 'k-')
@@ -180,19 +159,19 @@ plt.show()
 print('Size of data after removing unwanted values:', image_paths.shape, angles.shape)
 
 
-# ## Split the datasets
-
-# In[6]:
-
-
-image_paths_train, image_paths_test, angles_train, angles_test = train_test_split(image_paths, angles,
-                                                                                  test_size=0.05, random_state=42)
-
-print('Train:', image_paths_train.shape, angles_train.shape)
-print('Test:', image_paths_test.shape, angles_test.shape)
-
-
 # ## Keras model with Nvidia CNN
+
+# The model used below is the suggested Nvidia architecture.
+# 
+# - Input size is 3@66x200
+# - Convolutional Layer: 36 feature maps 5x5 Kernal - Output:36@14x47
+# - Convolutional Layer: 48 feature maps 5x5 Kernal - Output:48@5x22
+# - Convolutional Layer: 64 feature maps 3x3 Kernal - Output:64@3x20
+# - Convolutional Layer: 64 feature maps 3x3 Kernal - Output:64@1x18
+# - Flatten
+# - Fully Connected Layer x4
+# 
+# The generator is used to create more data for the training and validation sets. Since the data creation and shuffle provides enough changes we use the initial data set for both training and validation sets.
 
 # In[7]:
 
@@ -213,21 +192,12 @@ model.add(Dense(1))
 
 model.compile(loss='mse', optimizer='adam')
 
-train_gen = generate_training_data(image_paths_train, angles_train, validation_flag=False, batch_size=64)
-val_gen = generate_training_data(image_paths_train, angles_train, validation_flag=True, batch_size=64)
-test_gen = generate_training_data(image_paths_test, angles_test, validation_flag=True, batch_size=64)
-##save the model after every epoch
-checkpoint = ModelCheckpoint('model{epoch:02d}.h5')    
+train_gen = generate_training_data(image_paths, angles, batch_size=64)
+val_gen = generate_training_data(image_paths, angles, batch_size=64)
 
 history = model.fit_generator(train_gen, validation_data=val_gen, nb_val_samples=2560, samples_per_epoch=23040, 
                                   nb_epoch=5, verbose=2, callbacks=[checkpoint])
 
 model.save('model.h5')
 print("done")
-
-
-# In[ ]:
-
-
-
 
