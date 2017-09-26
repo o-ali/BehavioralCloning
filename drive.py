@@ -49,9 +49,8 @@ controller.set_desired(set_speed)
 
 def preprocess_image(img):
     '''
-    Method for preprocessing images: this method is the same used in drive.py, except this version uses
-    BGR to YUV and drive.py uses RGB to YUV (due to using cv2 to read the image here, where drive.py images are 
-    received in RGB)
+    Method for preprocessing images: this method is the same used in model.py, except this version uses
+    RGB to YUV and model.py uses BGR to YUV
     '''
     # original shape: 160x320x3, input shape for neural net: 66x200x3
     # crop to 40x320x3
